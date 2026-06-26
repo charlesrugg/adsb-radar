@@ -1,80 +1,53 @@
-# Overhead — a plane radar for your FlightAware account
+# adsb-radar
 
-A live dashboard with two pieces:
+A live ADS-B radar dashboard powered by a local [PiAware](https://flightaware.com/adsb/piaware/) receiver.
 
-- **A radar scope** — a phosphor-green PPI display centered on your location, with
-  a rotating sweep, range rings, and aircraft blips that bloom as the sweep passes
-  them. Each blip is tagged with its callsign, flight level, and speed.
-- **A ticker of the planes overhead** — a scrolling strip across the bottom listing
-  every aircraft currently in range (callsign · type · route · altitude · speed · heading).
+- **Radar scope** — phosphor-green PPI display with a rotating sweep, range rings, and aircraft blips tagged with callsign, flight level, and speed.
+- **Flight strip rack** — contacts listed by distance; click one to lock onto it.
+- **Ticker** — scrolling strip across the bottom with every aircraft in range.
 
-A flight-strip rack on the right lists contacts by distance; click one to lock onto it.
+No external API, no API key, no cost — data comes straight from dump1090 on your local network.
 
-It pulls live traffic from **FlightAware AeroAPI** via a tiny local server that keeps
-your API key off the browser. With no key set, it runs in **demo mode** with
-simulated traffic so you can see it working immediately.
+## Requirements
 
-## Why the local server?
-
-AeroAPI authenticates with your key in an `x-apikey` header and does **not** permit
-cross-origin browser calls. So the page can't (and shouldn't) call AeroAPI directly —
-that would leak your key and hit CORS errors. `server.js` holds the key, makes the
-request, caches the result to protect your credits, and serves the dashboard.
+- A PiAware / dump1090 receiver on your local network
+- Node 20+
 
 ## Setup
 
-Requires Node 20+ (for built-in `fetch` and `--env-file`).
-
 ```bash
-npm install
-cp .env.example .env
-# edit .env: add AEROAPI_KEY and set HOME_LAT / HOME_LON to your location
-npm start
+node server.js
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000. If PiAware is unreachable it falls back to demo mode with simulated traffic.
 
-Without an `AEROAPI_KEY` it starts in demo mode — same visuals, fake planes.
+## Configuration
 
-## Configuration (.env)
+Set these as environment variables or in a `.env` file:
 
-| Variable         | Meaning                                                        |
-| ---------------- | ------------------------------------------------------------- |
-| `AEROAPI_KEY`    | Your AeroAPI key. Blank = demo mode.                          |
-| `HOME_LAT/LON`   | Center of the radar (your location).                          |
-| `HOME_LABEL`     | Short label shown at scope center (e.g. an airport ID).       |
-| `RANGE_NM`       | Radar radius in nautical miles; sets the search bounding box. |
-| `BELOW_ALTITUDE` | Optional altitude ceiling in *hundreds* of feet (180 = FL180).|
-| `CACHE_SECONDS`  | Reuse each AeroAPI response this long. Protects your credits. |
-| `MAX_PAGES`      | Result pages (15 flights each). Each page is billed.          |
-| `PORT`           | Web server port (default 3000).                              |
-
-## A note on cost
-
-AeroAPI is **billed per query** (per page of up to 15 results). The dashboard
-polls every 15 seconds, but the server only hits AeroAPI once per `CACHE_SECONDS`
-and serves the cache in between, so your real query rate is roughly
-`(1 / CACHE_SECONDS) × MAX_PAGES` per page. Raise `CACHE_SECONDS` or lower
-`MAX_PAGES` to spend less. Check usage at the AeroAPI portal under your account.
+| Variable            | Default           | Meaning                                         |
+| ------------------- | ----------------- | ----------------------------------------------- |
+| `PIAWARE_HOST`      | `192.168.4.188`   | IP address of your PiAware receiver             |
+| `PIAWARE_HTTP_PORT` | `8080`            | dump1090 HTTP port (serves `/data/aircraft.json`) |
+| `HOME_LAT`          | `40.2015`         | Radar center latitude                           |
+| `HOME_LON`          | `-77.1889`        | Radar center longitude                          |
+| `HOME_LABEL`        | `HOME`            | Label shown at scope center                     |
+| `RANGE_NM`          | `60`              | Radar radius in nautical miles                  |
+| `CACHE_SECONDS`     | `5`               | How long to reuse a cached response             |
+| `PORT`              | `3000`            | Web server port                                 |
 
 ## How the data flows
 
 ```
-browser ──poll /api/overhead──► server.js ──/flights/search──► AeroAPI
-   ▲                                │  (-latlong "minLat minLon maxLat maxLon")
+browser ──poll /api/overhead──► server.js ──GET /data/aircraft.json──► dump1090 (PiAware)
+   ▲                                │
    └──────── cached JSON ◄──────────┘  cached for CACHE_SECONDS
 ```
 
-The endpoint used is `GET /flights/search` with a `-latlong` bounding box built
-from your home location and `RANGE_NM`. Altitudes from AeroAPI arrive in hundreds
-of feet and are converted to real feet / flight levels for display.
+dump1090's HTTP server runs on port 8080. Port 30005 (Beast binary) is a raw TCP stream and is not used here.
 
 ## Customizing
 
-- **Look:** the CSS color tokens at the top of `public/index.html` (`--phos`,
-  `--amber`, ring colors) control the whole scope. Swap green for amber for a
-  classic monochrome-amber console.
-- **Sweep speed / persistence:** in the script, `sweep=(sweep+dt*70)` sets rev
-  speed; the `Math.exp(-delta/52)` term controls blip afterglow length.
-- **What counts as "overhead":** narrow `RANGE_NM` and set `BELOW_ALTITUDE` to
-  focus on low traffic actually passing over you rather than high cruisers.
+- **Colors:** CSS tokens at the top of `index.html` (`--phos`, `--amber`, ring colors) control the whole scope.
+- **Sweep speed / persistence:** `sweep=(sweep+dt*70)` sets rotation speed; `Math.exp(-delta/52)` controls blip afterglow length.
+- **Range:** narrow `RANGE_NM` to focus on low traffic actually passing overhead.
