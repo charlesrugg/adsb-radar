@@ -1,0 +1,11 @@
+{
+  "name": "plane-radar",
+  "version": "1.0.0",
+  "description": "A radar scope + ticker of the planes overhead, powered by your FlightAware AeroAPI account.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file=.env server.js",
+    "demo": "node server.js"
+  },
+  "engines": { "node": ">=20" }
+}

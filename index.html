@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overhead — plane radar</title>
+<style>
+  :root{
+    --bg:#04130c; --bg2:#061b10;
+    --panel:rgba(9,30,20,.72); --panel-line:#103b27;
+    --grid:#0e3d27; --grid-bright:#15643d;
+    --phos:#5ef08a; --phos-dim:#2f9d63; --phos-text:#86f3a8;
+    --text-dim:#4f8f6c; --amber:#ffb347; --amber-dim:#c98a2e; --warn:#ff6060;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(120% 90% at 50% -10%, #0a2417 0%, var(--bg) 60%, #020a06 100%);
+    color:var(--phos-text); font-family:var(--mono);
+    font-variant-numeric:tabular-nums; letter-spacing:.02em;
+    display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  }
+  /* ---- Top status strip ---- */
+  header{
+    display:flex; align-items:center; gap:0; flex-wrap:wrap;
+    padding:8px 14px; border-bottom:1px solid var(--panel-line);
+    background:linear-gradient(180deg,rgba(8,28,18,.9),rgba(4,15,10,.4));
+    text-transform:uppercase; font-size:12px;
+  }
+  .stat{padding:2px 16px 2px 0; margin-right:16px; border-right:1px solid var(--panel-line)}
+  .stat:last-child{border-right:0}
+  .stat b{display:block; font-size:9px; color:var(--text-dim); letter-spacing:.18em; font-weight:500}
+  .stat span{font-size:15px; color:var(--phos); text-shadow:0 0 8px rgba(94,240,138,.45)}
+  .brand{font-size:15px; letter-spacing:.32em; color:var(--phos);
+    text-shadow:0 0 10px rgba(94,240,138,.5); margin-right:auto; font-weight:600}
+  .mode{font-size:10px; padding:3px 9px; border:1px solid var(--phos-dim);
+    border-radius:2px; letter-spacing:.18em; color:var(--phos)}
+  .mode.demo{border-color:var(--amber-dim); color:var(--amber); text-shadow:0 0 8px rgba(255,179,71,.4)}
+  .mode.err{border-color:var(--warn); color:var(--warn)}
+
+  /* ---- Main ---- */
+  main{flex:1; display:flex; min-height:0}
+  .scope-wrap{flex:1; position:relative; display:flex; align-items:center; justify-content:center; padding:14px; min-width:0}
+  canvas#scope{width:100%; height:100%; display:block}
+  .zoom{position:absolute; left:18px; top:18px; display:flex; flex-direction:column; gap:6px}
+  .zoom button{
+    font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:var(--phos-dim);
+    background:rgba(6,24,15,.7); border:1px solid var(--panel-line); border-radius:2px;
+    padding:5px 9px; cursor:pointer; min-width:52px;
+  }
+  .zoom button:hover{color:var(--phos); border-color:var(--phos-dim)}
+  .zoom button[aria-pressed="true"]{color:var(--bg); background:var(--phos); border-color:var(--phos);
+    text-shadow:none; box-shadow:0 0 12px rgba(94,240,138,.5)}
+  .zoom button:focus-visible{outline:2px solid var(--amber); outline-offset:2px}
+
+  /* ---- Strip rack ---- */
+  aside{width:320px; border-left:1px solid var(--panel-line); background:var(--panel);
+    display:flex; flex-direction:column; min-height:0}
+  .rack-head{padding:9px 14px; font-size:10px; letter-spacing:.18em; color:var(--text-dim);
+    text-transform:uppercase; border-bottom:1px solid var(--panel-line); display:flex; justify-content:space-between}
+  .rack{overflow-y:auto; flex:1; padding:8px}
+  .rack::-webkit-scrollbar{width:8px}
+  .rack::-webkit-scrollbar-thumb{background:var(--panel-line); border-radius:4px}
+  .strip{
+    width:100%; text-align:left; font-family:var(--mono); cursor:pointer;
+    background:rgba(7,26,17,.6); border:1px solid var(--panel-line); border-left:3px solid var(--phos-dim);
+    border-radius:3px; padding:8px 10px; margin-bottom:7px; color:var(--phos-text); display:block;
+  }
+  .strip:hover{border-color:var(--phos-dim); background:rgba(12,38,25,.7)}
+  .strip:focus-visible{outline:2px solid var(--amber); outline-offset:1px}
+  .strip[aria-pressed="true"]{border-left-color:var(--amber); border-color:var(--amber-dim);
+    background:rgba(40,30,12,.55)}
+  .strip .l1{display:flex; justify-content:space-between; align-items:baseline}
+  .strip .ident{font-size:15px; color:var(--phos); letter-spacing:.06em}
+  .strip[aria-pressed="true"] .ident{color:var(--amber); text-shadow:0 0 8px rgba(255,179,71,.4)}
+  .strip .dist{font-size:11px; color:var(--text-dim)}
+  .strip .l2{font-size:11px; color:var(--text-dim); margin-top:3px; display:flex; justify-content:space-between; gap:8px}
+  .strip .route{color:var(--phos-text)}
+  .rack-empty{color:var(--text-dim); font-size:12px; text-align:center; padding:30px 14px; line-height:1.6}
+
+  /* ---- Ticker ---- */
+  .ticker{height:42px; border-top:1px solid var(--panel-line); background:linear-gradient(180deg,rgba(4,15,10,.5),rgba(8,28,18,.92));
+    display:flex; align-items:center; overflow:hidden; position:relative}
+  .ticker::before{content:"◂ OVERHEAD"; position:absolute; left:0; top:0; bottom:0; z-index:2;
+    display:flex; align-items:center; padding:0 14px; font-size:10px; letter-spacing:.18em; color:var(--bg);
+    background:var(--phos); text-shadow:none; box-shadow:0 0 18px rgba(94,240,138,.5)}
+  .ticker-track{display:flex; white-space:nowrap; padding-left:140px; will-change:transform;
+    animation:scroll linear infinite}
+  @keyframes scroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
+  .tick{display:inline-flex; align-items:center; gap:8px; padding:0 26px; font-size:13px; color:var(--phos-text)}
+  .tick .id{color:var(--phos); text-shadow:0 0 7px rgba(94,240,138,.4)}
+  .tick .sep{color:var(--phos-dim)}
+  .tick .hd{color:var(--text-dim)}
+  .tick.empty{color:var(--text-dim)}
+
+  @media (max-width:760px){
+    aside{display:none}
+    .stat{margin-right:10px; padding-right:10px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .ticker-track{animation-duration:140s !important}
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">OVERHEAD</div>
+    <div class="stat"><b>Station</b><span id="s-home">—</span></div>
+    <div class="stat"><b>Zulu</b><span id="s-clock">--:--:--</span></div>
+    <div class="stat"><b>Range</b><span id="s-range">—</span></div>
+    <div class="stat"><b>Contacts</b><span id="s-count">0</span></div>
+    <div class="stat"><b>Last</b><span id="s-age">—</span></div>
+    <div class="mode" id="s-mode">···</div>
+  </header>
+
+  <main>
+    <div class="scope-wrap">
+      <canvas id="scope"></canvas>
+      <div class="zoom" id="zoom"></div>
+    </div>
+    <aside>
+      <div class="rack-head"><span>Flight Strips</span><span id="rack-sub">by distance</span></div>
+      <div class="rack" id="rack"></div>
+    </aside>
+  </main>
+
+  <div class="ticker"><div class="ticker-track" id="ticker"></div></div>
+
+<script>
+(() => {
+  "use strict";
+  const TAU = Math.PI * 2, D2R = Math.PI/180;
+
+  // ---- State ----
+  let home = { lat: 40.2015, lon: -77.1889, label: "HOME" };
+  let serverRange = 60;        // max nm the backend covers
+  let displayRange = 60;       // current zoom (nm radius)
+  let mode = "init";           // live | demo | error
+  let flights = [];            // working set (dead-reckoned each frame)
+  let lastUpdate = null;       // ISO string of last live data
+  let selectedId = null;
+  let sweep = 0;               // degrees
+  const reduceMotion = matchMedia("(prefers-reduced-motion:reduce)").matches;
+
+  const $ = (id) => document.getElementById(id);
+  const cvs = $("scope"), ctx = cvs.getContext("2d");
+
+  // ---- Geo helpers ----
+  const nmPerLat = 60;
+  const nmPerLon = () => 60 * Math.cos(home.lat * D2R);
+  function relNm(f){ // east/north nm from home
+    return { e:(f.lon-home.lon)*nmPerLon(), n:(f.lat-home.lat)*nmPerLat };
+  }
+  function distNm(f){ const r=relNm(f); return Math.hypot(r.e,r.n); }
+  function bearing(f){ const r=relNm(f); let b=Math.atan2(r.e,r.n)/D2R; return (b+360)%360; }
+  function advance(f, dt){ // move flight along heading by groundspeed over dt seconds
+    if(f.groundspeed==null||f.heading==null) return;
+    const nm = f.groundspeed * (dt/3600);
+    f.lat += (nm*Math.cos(f.heading*D2R))/nmPerLat;
+    f.lon += (nm*Math.sin(f.heading*D2R))/nmPerLon();
+  }
+  function flLabel(alt){ if(alt==null) return "—"; return alt>=18000 ? "FL"+String(Math.round(alt/100)).padStart(3,"0") : Math.round(alt)+"ft"; }
+
+  // ---- Demo traffic generator ----
+  const AIRLINES=["DAL","UAL","AAL","SWA","JBU","FDX","UPS","ASA","NKS","RPA","SKW"];
+  const TYPES=["B738","A320","A321","B739","E175","CRJ9","B752","A319","B763","C172","PC12"];
+  function rand(a,b){return a+Math.random()*(b-a)}
+  function pick(a){return a[Math.floor(Math.random()*a.length)]}
+  function spawnDemo(onEdge){
+    const d = onEdge ? serverRange*rand(.92,1.0) : rand(serverRange*.08, serverRange*.97);
+    const brg = rand(0,360);
+    const e = d*Math.sin(brg*D2R), n = d*Math.cos(brg*D2R);
+    const small = Math.random()<.18;
+    const type = small ? pick(["C172","PC12","SR22","BE36"]) : pick(TYPES);
+    return {
+      id:"DEMO"+Math.floor(rand(1000,9999)),
+      ident: pick(AIRLINES)+Math.floor(rand(100,4999)),
+      type,
+      origin: pick(["ATL","ORD","JFK","BOS","PHL","IAD","CLT","DTW","MDW","PIT"]),
+      dest: pick(["LAX","DEN","MCO","SFO","DFW","SEA","BWI","EWR","MIA","BNA"]),
+      lat: home.lat + n/nmPerLat,
+      lon: home.lon + e/nmPerLon(),
+      altitude: small ? Math.round(rand(3,110))*100 : Math.round(rand(180,400))*100,
+      groundspeed: small ? rand(110,210) : rand(390,520),
+      heading: rand(0,360),
+    };
+  }
+  function ensureDemo(){
+    while(flights.length < 11) flights.push(spawnDemo(true));
+  }
+
+  // ---- Data fetch ----
+  async function loadConfig(){
+    try{
+      const r = await fetch("/api/config");
+      if(r.ok){ const c=await r.json();
+        home=c.home; serverRange=c.rangeNm; displayRange=c.rangeNm;
+        setZoom(displayRange);
+      }
+    }catch(e){ /* static-file mode: keep defaults */ }
+    $("s-home").textContent = home.label;
+  }
+  async function poll(){
+    try{
+      const r = await fetch("/api/overhead");
+      if(r.status===503){ goDemo(); return; }  // PiAware unreachable — fall back to demo
+      if(!r.ok){ const j=await r.json().catch(()=>({})); setMode("error", j.message); return; }
+      const data = await r.json();
+      home = data.home; serverRange = data.rangeNm;
+      if(displayRange>serverRange) setZoom(serverRange);
+      flights = data.flights.map(f=>({...f}));
+      lastUpdate = data.updated;
+      setMode("live");
+    }catch(e){ goDemo(); }
+  }
+  function goDemo(){
+    if(mode!=="demo"){ flights=[]; ensureDemo(); }
+    setMode("demo");
+    lastUpdate = new Date().toISOString();
+  }
+  function setMode(m, msg){
+    mode=m; const el=$("s-mode");
+    el.className="mode"+(m==="demo"?" demo":m==="error"?" err":"");
+    el.textContent = m==="live"?"● LIVE":m==="demo"?"◐ DEMO":"✕ "+(msg?"ERROR":"ERROR");
+    el.title = msg||"";
+  }
+
+  // ---- Zoom controls ----
+  const ZOOMS=[10,20,40,80,160];
+  function buildZoom(){
+    const wrap=$("zoom"); wrap.innerHTML="";
+    ZOOMS.forEach(z=>{
+      const b=document.createElement("button");
+      b.textContent=z+" nm"; b.dataset.z=z;
+      b.setAttribute("aria-pressed", z===displayRange);
+      b.onclick=()=>setZoom(z);
+      wrap.appendChild(b);
+    });
+  }
+  function setZoom(z){
+    displayRange=z;
+    document.querySelectorAll("#zoom button").forEach(b=>
+      b.setAttribute("aria-pressed", Number(b.dataset.z)===z));
+    $("s-range").textContent = z+" nm";
+  }
+
+  // ---- Render: radar ----
+  let W=0,H=0,cx=0,cy=0,R=0,dpr=1;
+  function resize(){
+    const rect=cvs.parentElement.getBoundingClientRect();
+    dpr=Math.min(devicePixelRatio||1,2);
+    W=rect.width; H=rect.height;
+    cvs.width=W*dpr; cvs.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+    cx=W/2; cy=H/2; R=Math.min(W,H)/2 - 24;
+  }
+  function drawScope(){
+    ctx.clearRect(0,0,W,H);
+    // faint scope glow
+    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,R);
+    g.addColorStop(0,"rgba(20,80,50,.18)"); g.addColorStop(1,"rgba(4,18,11,0)");
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,R,0,TAU); ctx.fill();
+
+    // range rings
+    ctx.lineWidth=1; ctx.font="10px "+getCSS("--mono"); ctx.textAlign="left";
+    for(let i=1;i<=4;i++){
+      const rr=R*i/4, nm=Math.round(displayRange*i/4);
+      ctx.strokeStyle = i===4 ? cssv("--grid-bright") : cssv("--grid");
+      ctx.beginPath(); ctx.arc(cx,cy,rr,0,TAU); ctx.stroke();
+      ctx.fillStyle=cssv("--text-dim");
+      ctx.fillText(nm+"nm", cx+4, cy-rr+12);
+    }
+    // crosshair + bearing ticks
+    ctx.strokeStyle=cssv("--grid");
+    ctx.beginPath();
+    ctx.moveTo(cx-R,cy); ctx.lineTo(cx+R,cy);
+    ctx.moveTo(cx,cy-R); ctx.lineTo(cx,cy+R); ctx.stroke();
+    ctx.strokeStyle=cssv("--grid-bright");
+    for(let a=0;a<360;a+=30){
+      const ar=a*D2R, x1=cx+Math.sin(ar)*(R-6), y1=cy-Math.cos(ar)*(R-6);
+      const x2=cx+Math.sin(ar)*R, y2=cy-Math.cos(ar)*R;
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    }
+    // compass labels
+    ctx.fillStyle=cssv("--phos-dim"); ctx.textAlign="center"; ctx.font="11px "+getCSS("--mono");
+    ctx.fillText("N",cx,cy-R-5); ctx.fillText("S",cx,cy+R+13);
+    ctx.fillText("E",cx+R+8,cy+4); ctx.fillText("W",cx-R-8,cy+4);
+
+    // sweep with afterglow wedge
+    if(!reduceMotion){
+      const segs=42, span=58; // degrees of trailing glow
+      for(let i=0;i<segs;i++){
+        const a0=(sweep - i*(span/segs))*D2R, a1=(sweep-(i+1)*(span/segs))*D2R;
+        const alpha=0.16*(1-i/segs);
+        ctx.beginPath(); ctx.moveTo(cx,cy);
+        ctx.arc(cx,cy,R, a0 - Math.PI/2, a1 - Math.PI/2, true);
+        ctx.closePath(); ctx.fillStyle=`rgba(94,240,138,${alpha})`; ctx.fill();
+      }
+      // leading edge line
+      const sr=sweep*D2R;
+      ctx.strokeStyle="rgba(140,243,168,.8)"; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(cx,cy);
+      ctx.lineTo(cx+Math.sin(sr)*R, cy-Math.cos(sr)*R); ctx.stroke();
+    }
+
+    // blips
+    const pxPerNm = R/displayRange;
+    for(const f of flights){
+      const r=relNm(f), d=Math.hypot(r.e,r.n);
+      if(d>displayRange) continue;
+      const x=cx+r.e*pxPerNm, y=cy-r.n*pxPerNm;
+      const sel = f.id===selectedId;
+      // persistence brightness from sweep
+      let bright=1;
+      if(!reduceMotion && !sel){
+        const brg=(Math.atan2(r.e,r.n)/D2R+360)%360;
+        let delta=(sweep-brg+360)%360;
+        bright=Math.max(0.16, Math.exp(-delta/52));
+      }
+      const col = sel ? cssv("--amber") : cssv("--phos");
+      // glyph: triangle pointing along heading
+      ctx.save(); ctx.translate(x,y);
+      if(f.heading!=null) ctx.rotate(f.heading*D2R);
+      ctx.globalAlpha=bright;
+      ctx.shadowColor=col; ctx.shadowBlur=sel?14:10*bright;
+      ctx.fillStyle=col; ctx.beginPath();
+      ctx.moveTo(0,-6); ctx.lineTo(4.2,5); ctx.lineTo(0,2.6); ctx.lineTo(-4.2,5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // data tag
+      if(sel || bright>0.5 || d < displayRange*0.5){
+        ctx.globalAlpha=sel?1:Math.min(1,bright+0.25);
+        ctx.shadowBlur=0; ctx.textAlign="left"; ctx.font="10px "+getCSS("--mono");
+        ctx.fillStyle = sel?cssv("--amber"):cssv("--phos-text");
+        ctx.fillText(f.ident, x+8, y-2);
+        ctx.fillStyle = sel?cssv("--amber-dim"):cssv("--text-dim");
+        ctx.fillText(flLabel(f.altitude)+(f.groundspeed?"  "+Math.round(f.groundspeed)+"kt":""), x+8, y+9);
+      }
+      ctx.globalAlpha=1;
+    }
+
+    // home marker
+    ctx.shadowColor=cssv("--phos"); ctx.shadowBlur=10; ctx.fillStyle=cssv("--phos");
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
+    ctx.fillRect(-3,-3,6,6); ctx.restore(); ctx.shadowBlur=0;
+    ctx.fillStyle=cssv("--phos-dim"); ctx.textAlign="center"; ctx.font="10px "+getCSS("--mono");
+    ctx.fillText(home.label, cx, cy+18);
+  }
+  function getCSS(v){return "ui-monospace,monospace"}
+  function cssv(name){return getComputedStyle(document.documentElement).getPropertyValue(name).trim()}
+
+  // ---- Render: strips + ticker ----
+  function sorted(){ return [...flights].sort((a,b)=>distNm(a)-distNm(b)); }
+  function renderRack(){
+    const rack=$("rack"); const list=sorted();
+    $("s-count").textContent=list.length;
+    if(!list.length){
+      rack.innerHTML='<div class="rack-empty">No contacts within range.<br>Quiet skies overhead.</div>';
+      return;
+    }
+    rack.innerHTML="";
+    for(const f of list){
+      const d=distNm(f), b=bearing(f);
+      const btn=document.createElement("button"); btn.className="strip";
+      btn.setAttribute("aria-pressed", f.id===selectedId);
+      btn.onclick=()=>{ selectedId = selectedId===f.id?null:f.id; renderRack(); };
+      const route=(f.origin||"???")+" → "+(f.dest||"???");
+      btn.innerHTML=
+        '<div class="l1"><span class="ident">'+f.ident+'</span>'+
+        '<span class="dist">'+d.toFixed(1)+'nm '+String(Math.round(b)).padStart(3,"0")+'°</span></div>'+
+        '<div class="l2"><span class="route">'+route+'</span>'+
+        '<span>'+(f.type||"—")+'</span></div>'+
+        '<div class="l2"><span>'+flLabel(f.altitude)+'</span>'+
+        '<span>'+(f.groundspeed?Math.round(f.groundspeed)+" kt":"—")+'</span></div>';
+      rack.appendChild(btn);
+    }
+  }
+  let lastTickerKey="";
+  function renderTicker(){
+    const list=sorted();
+    const key=list.map(f=>f.ident+flLabel(f.altitude)).join("|");
+    if(key===lastTickerKey) return; lastTickerKey=key;
+    const track=$("ticker");
+    if(!list.length){
+      track.style.animation="none";
+      track.innerHTML='<span class="tick empty">— no aircraft overhead —</span>';
+      return;
+    }
+    const item=(f)=>{
+      const hd=f.heading!=null?'<span class="hd">▲'+String(Math.round(f.heading)).padStart(3,"0")+'°</span>':"";
+      return '<span class="tick"><span class="id">'+f.ident+'</span>'+
+        '<span class="sep">·</span>'+(f.type||"—")+
+        '<span class="sep">·</span>'+(f.origin||"???")+'→'+(f.dest||"???")+
+        '<span class="sep">·</span>'+flLabel(f.altitude)+
+        '<span class="sep">·</span>'+(f.groundspeed?Math.round(f.groundspeed)+"kt":"—")+' '+hd+'</span>';
+    };
+    const html=list.map(item).join("");
+    track.innerHTML=html+html; // duplicate for seamless loop
+    const dur=Math.max(18, list.length*4.5);
+    track.style.animation="scroll "+dur+"s linear infinite";
+  }
+
+  // ---- Clock + age ----
+  function tickClock(){
+    const z=new Date().toISOString().slice(11,19);
+    $("s-clock").textContent=z;
+    if(lastUpdate){
+      const sec=Math.round((Date.now()-new Date(lastUpdate))/1000);
+      $("s-age").textContent= sec<60? sec+"s" : Math.floor(sec/60)+"m "+(sec%60)+"s";
+    }
+  }
+
+  // ---- Loop ----
+  let last=performance.now();
+  function frame(now){
+    const dt=Math.min(0.1,(now-last)/1000); last=now;
+    if(!reduceMotion) sweep=(sweep + dt*70)%360; // ~5.1 s/rev
+    // dead-reckon motion (smooth gliding between polls / demo movement)
+    for(const f of flights) advance(f, dt);
+    if(mode==="demo"){
+      // respawn flights that left the scope
+      for(const f of flights){ if(distNm(f)>serverRange*1.06) Object.assign(f, spawnDemo(true)); }
+      ensureDemo();
+    }
+    drawScope();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- Init ----
+  async function init(){
+    resize(); buildZoom();
+    addEventListener("resize", resize);
+    await loadConfig();
+    $("s-home").textContent=home.label; $("s-range").textContent=displayRange+" nm";
+    await poll();
+    requestAnimationFrame(frame);
+    setInterval(poll, 15000);            // refresh data
+    setInterval(()=>{renderRack();renderTicker();}, 1000);
+    setInterval(tickClock, 1000);
+    tickClock(); renderRack(); renderTicker();
+  }
+  init();
+})();
+</script>
+</body>
+</html>
